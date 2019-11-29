@@ -1,0 +1,97 @@
+options:
+  docker: true
+
+clone:
+  depth: full 
+
+definitions:
+  caches:
+    sonar: ~/.sonar/cache
+  services:
+    docker:
+      memory: 3072
+  steps:
+    - step: &build-test-sonarcloud
+        name: Build, test and sonar check on PR
+        caches:
+          - node
+        image: 
+            name: us.gcr.io/whitewalker/base_image:latest
+            username: _json_key
+            password: '$GCP_ACCESS_KEY'
+        script:
+          - npm install 
+          - npm run test:coverage
+          - sonar-scanner
+
+    - step: &build-push
+        name: Stage-1 CI
+        caches:
+          - node
+        image: 
+            name: us.gcr.io/whitewalker/base_image:latest
+            username: _json_key
+            password: '$GCP_ACCESS_KEY'
+        script:
+          - ./ci-scripts/build-push.sh
+        services:
+          - docker
+        artifacts:
+          - tmp-image.docker
+
+    - step: &cypress-test
+        name: cypress-testing
+        script:
+          - ./ci-scripts/test.sh
+        artifacts:
+          - cypress/**
+
+    - step: &deploy
+        name: Stage-2 Deploy
+        deployment: test
+        image: 
+            name: us.gcr.io/whitewalker/base_image:latest
+            username: _json_key
+            password: '$GCP_ACCESS_KEY'
+        trigger: manual
+        script:
+          - ./ci-scripts/deploy.sh
+          
+    - step: &lighthouse
+        name: Stage-3 Lighthouse Report
+        image: 
+            name: us.gcr.io/whitewalker/base_image:latest
+            username: _json_key
+            password: '$GCP_ACCESS_KEY'
+        trigger: manual
+        script:
+          - ./ci-scripts/lighthouse.sh
+          - pipe: atlassian/google-cloud-storage-deploy:0.3.6
+            variables:
+              KEY_FILE: $GCS_KEY
+              PROJECT: 'whitewalker'
+              BUCKET: 'prekari-lighthouse-reports'
+              SOURCE: 'report-${BITBUCKET_BUILD_NUMBER}.json'
+        artifacts:
+          - report-${BITBUCKET_BUILD_NUMBER}.json
+pipelines:      
+  caches:
+    sonar: ~/.sonar/cache   
+  pull-requests:
+    '**': 
+      - step:
+          size: 2x
+          <<: *build-test-sonarcloud
+
+  branches:
+    dev:
+      - step:
+          <<: *build-test-sonarcloud
+      - step:
+          <<: *build-push
+      - step:
+          <<: *cypress-test
+      - step:
+          <<: *deploy
+      - step:
+          <<: *lighthouse
