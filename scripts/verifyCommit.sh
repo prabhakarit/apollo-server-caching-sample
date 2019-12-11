@@ -1,5 +1,5 @@
 #!/bin/bash
-# Author : Vasanth
+# Author : Prabhakar
 
 echo "checking if schema.json is staged"
 
